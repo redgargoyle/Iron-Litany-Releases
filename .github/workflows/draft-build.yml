@@ -1,0 +1,49 @@
+name: Unpublished native qualification
+on:
+  workflow_dispatch:
+    inputs:
+      draft_release_id:
+        required: true
+        type: string
+      source_commit:
+        required: true
+        type: string
+      cartridge_sha256:
+        required: true
+        type: string
+      cartridge_name:
+        required: true
+        type: string
+      scope:
+        required: true
+        default: windows-diagnostic
+        type: choice
+        options: [windows-diagnostic, full-pair]
+permissions:
+  contents: write
+concurrency:
+  group: native-qualification-${{ inputs.draft_release_id }}
+  cancel-in-progress: false
+jobs:
+  qualify:
+    strategy:
+      fail-fast: false
+      matrix:
+        include: ${{ fromJSON(inputs.scope == 'windows-diagnostic' && '[{"os":"windows-latest","platform":"win32"}]' || '[{"os":"windows-latest","platform":"win32"},{"os":"ubuntu-24.04","platform":"linux"}]') }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - name: Verify frozen draft inputs and qualify actual native play
+        env:
+          GH_TOKEN: ${{ github.token }}
+          DRAFT_RELEASE_ID: ${{ inputs.draft_release_id }}
+          SOURCE_COMMIT: ${{ inputs.source_commit }}
+          CARTRIDGE_SHA256: ${{ inputs.cartridge_sha256 }}
+          CARTRIDGE_NAME: ${{ inputs.cartridge_name }}
+          BUILD_PLATFORM: ${{ matrix.platform }}
+          BUILD_SCOPE: ${{ inputs.scope }}
+        run: python tools/qualify-draft.py
