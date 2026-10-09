@@ -31,11 +31,13 @@ def draft():
         raise ValueError('Qualification requires the original unpublished draft')
     return record
 
-def run(command, cwd, log, seconds=120):
+def run(command, cwd, log, seconds=120, checkpoint=None):
     with log.open('ab') as output:
         process = subprocess.Popen(command, cwd=cwd, stdout=output, stderr=subprocess.STDOUT,
                                    start_new_session=os.name != 'nt')
         deadline = time.monotonic() + seconds
+        next_checkpoint = time.monotonic() + 180
+        checkpoint_number = 0
         try:
             while process.poll() is None:
                 if time.monotonic() > deadline:
@@ -44,6 +46,10 @@ def run(command, cwd, log, seconds=120):
                     raise ValueError('Qualification log exceeds its bounded record')
                 if shutil.disk_usage(ROOT).free < 8_000_000_000:
                     raise ValueError('Ephemeral runner crossed its 8 GB running reserve')
+                if checkpoint is not None and time.monotonic() >= next_checkpoint:
+                    checkpoint_number += 1
+                    save_progress(checkpoint, checkpoint_number)
+                    next_checkpoint = time.monotonic() + 180
                 time.sleep(.5)
         except BaseException:
             if process.poll() is None:
@@ -95,9 +101,40 @@ def upload(files, label):
     record = draft()
     command = ['gh', 'release', 'upload', record['tag_name'], '--repo', REPO]
     command += [str(file) + '#' + label for file in files]
-    result = subprocess.run(command, capture_output=True, text=True)
+    result = subprocess.run(command, capture_output=True, text=True, timeout=120)
     if result.returncode:
         raise RuntimeError('Draft result upload failed')
+
+def save_progress(checkpoint, number):
+    # A finite native deadline permits at most sixteen 3-minute records. Only
+    # reported game instruments/automation counters are retained, never source
+    # contents or public Actions artifacts. Existing records are immutable.
+    if number > 16 or not checkpoint.exists() or checkpoint.stat().st_size > 3_000_000:
+        return
+    try:
+        original = json.loads(checkpoint.read_text())
+    except (ValueError, OSError):
+        return  # A concurrent checkpoint write can be read on the next interval.
+    last = original.get('last', {})
+    summary = {'runId': RUN_ID, 'platform': PLATFORM, 'scope': SCOPE,
+               'sourceCommit': COMMIT, 'orchestrationCommit': os.environ['GITHUB_SHA'],
+               'cartridgeSha256': DIGEST, 'published': False, 'completed': False,
+               'elapsedSeconds': original.get('elapsedSeconds'),
+               'last': {k: last.get(k) for k in ('phase', 'leg', 'progress', 'hull', 'spirit', 'supplies', 'guidance')},
+               'metrics': original.get('metrics'), 'recentTrace': original.get('trace', [])[-5:]}
+    data = (json.dumps(summary, indent=2) + '\n').encode()
+    if len(data) > 32_000:
+        return
+    file = checkpoint.parent / ('progress-' + RUN_ID + '-' + PLATFORM + '-' + str(number) + '.json')
+    file.write_bytes(data)
+    try:
+        upload([file], 'Unpublished incomplete native checkpoint')
+    except (RuntimeError, subprocess.TimeoutExpired, subprocess.CalledProcessError):
+        # Optional telemetry cannot turn otherwise correct native input into
+        # a failure. The final result still requires its real protected upload.
+        print('Protected checkpoint transfer deferred; native qualification continues.', flush=True)
+        return
+    print('Protected native checkpoint saved; qualification is still incomplete.', flush=True)
 
 def main():
     if REPO != 'redgargoyle/Iron-Litany-Releases' or not re.fullmatch(r'[0-9]+', RELEASE) or not re.fullmatch(r'[a-f0-9]{40}', COMMIT) or not re.fullmatch(r'[a-f0-9]{64}', DIGEST) or not re.fullmatch(r'build-input-[a-f0-9]{40}\.zip', NAME) or PLATFORM not in ('linux', 'win32') or SCOPE not in ('windows-diagnostic', 'full-pair'):
@@ -123,12 +160,14 @@ def main():
     tests = sorted(str(p.relative_to(source)) for p in (source / 'tests').glob('*.test.mjs'))
     run([node, '--test', '--test-concurrency=2', *tests], source, log)
     run([node, 'tools/check.mjs'], source, log)
+    print('Every frozen test and runtime reference check passed.', flush=True)
     run([node, 'tools/package-desktop.mjs', '--platform=' + PLATFORM, '--out=' + str(output), '--source-receipt=' + str(source / 'build-source.json')], source, log, 360)
     package = 'windows' if PLATFORM == 'win32' else 'linux'
     bundle = output / ('IronLitany-' + package + '-x64')
     manifest = json.loads((bundle / 'build-manifest.json').read_text())
     if manifest.get('commit') != COMMIT or manifest.get('sourceStatus') != 'clean' or manifest.get('sourceMethod') != 'hash-verified-export':
         raise ValueError('Native bundle lost its original input identity')
+    print('Official runtime packaged; original private source identity retained.', flush=True)
     command = [str(bundle / ('IronLitany.exe' if PLATFORM == 'win32' else 'IronLitany')), '--smoke-test', '--campaign-qa', '--smoke-output=' + str(evidence), '--ignore-gpu-blocklist', '--use-gl=angle']
     if PLATFORM == 'win32':
         command += ['--use-angle=swiftshader']
@@ -139,7 +178,8 @@ def main():
         command = ['xvfb-run', '-a', *command, '--use-angle=gl']
         os.environ['LIBGL_ALWAYS_SOFTWARE'] = '1'
         budget = 960
-    run(command, source, evidence / 'native.log', budget)
+    print('Launching actual native controls and the three-watch campaign.', flush=True)
+    run(command, source, evidence / 'native.log', budget, checkpoint=evidence / 'campaign-checkpoint.json')
     report = json.loads((evidence / 'smoke-report.json').read_text())
     if report.get('ok') is not True or report.get('campaignQA', {}).get('ok') is not True:
         raise ValueError('Actual native campaign did not qualify')
