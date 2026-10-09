@@ -16,13 +16,14 @@ PLATFORM = os.environ['BUILD_PLATFORM']
 SCOPE = os.environ['BUILD_SCOPE']
 RUN_ID = os.environ['GITHUB_RUN_ID']
 ROOT = Path(os.environ['RUNNER_TEMP']) / ('iron-qualification-' + RUN_ID + '-' + PLATFORM)
+CLI_FLAGS = {'creationflags': subprocess.CREATE_NO_WINDOW} if os.name == 'nt' else {}
 
 def sha(file):
     with file.open('rb') as stream:
         return hashlib.file_digest(stream, 'sha256').hexdigest()
 
 def api(route):
-    result = subprocess.run(['gh', 'api', 'repos/' + REPO + route], capture_output=True, text=True, check=True)
+    result = subprocess.run(['gh', 'api', 'repos/' + REPO + route], capture_output=True, text=True, check=True, timeout=45, **CLI_FLAGS)
     return json.loads(result.stdout)
 
 def draft():
@@ -101,7 +102,9 @@ def upload(files, label):
     record = draft()
     command = ['gh', 'release', 'upload', record['tag_name'], '--repo', REPO]
     command += [str(file) + '#' + label for file in files]
-    result = subprocess.run(command, capture_output=True, text=True, timeout=120)
+    # Protected telemetry is a console task, never a competing GUI window.
+    # The actual native game is launched separately with its visible window.
+    result = subprocess.run(command, capture_output=True, text=True, timeout=120, **CLI_FLAGS)
     if result.returncode:
         raise RuntimeError('Draft result upload failed')
 
