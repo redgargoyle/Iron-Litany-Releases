@@ -109,13 +109,15 @@ def save_progress(checkpoint, number):
     # A finite native deadline permits at most sixteen 3-minute records. Only
     # reported game instruments/automation counters are retained, never source
     # contents or public Actions artifacts. Existing records are immutable.
-    if number > 16 or not checkpoint.exists() or checkpoint.stat().st_size > 3_000_000:
+    if not 1 <= number <= 16 or not checkpoint.exists() or checkpoint.stat().st_size > 3_000_000:
         return
     try:
         original = json.loads(checkpoint.read_text())
     except (ValueError, OSError):
         return  # A concurrent checkpoint write can be read on the next interval.
-    last = original.get('last', {})
+    if not isinstance(original, dict) or not isinstance(original.get('last'), dict) or not isinstance(original.get('trace'), list):
+        return
+    last = original['last']
     summary = {'runId': RUN_ID, 'platform': PLATFORM, 'scope': SCOPE,
                'sourceCommit': COMMIT, 'orchestrationCommit': os.environ['GITHUB_SHA'],
                'cartridgeSha256': DIGEST, 'published': False, 'completed': False,
