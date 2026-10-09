@@ -1,0 +1,26 @@
+name: Draft build admission
+on:
+  workflow_dispatch:
+    inputs:
+      draft_release_id:
+        required: true
+        type: string
+permissions:
+  contents: write
+jobs:
+  admission:
+    runs-on: windows-latest
+    timeout-minutes: 3
+    steps:
+      - name: Verify unpublished qualification draft
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_ID: ${{ inputs.draft_release_id }}
+        run: |
+          if ($env:RELEASE_ID -notmatch '^[0-9]+$') { throw 'Invalid draft identifier' }
+          $raw = gh api "repos/$env:GITHUB_REPOSITORY/releases/$env:RELEASE_ID"
+          if ($LASTEXITCODE -ne 0) { throw 'Draft access failed' }
+          $release = $raw | ConvertFrom-Json
+          if (-not $release.draft -or $release.tag_name -notmatch '^qualification-v055-[a-f0-9]{7,40}$') { throw 'Expected an unpublished qualification draft' }
+          Write-Output 'Standard Windows runner admitted; same-repository draft access confirmed. No game inputs downloaded or published.'
