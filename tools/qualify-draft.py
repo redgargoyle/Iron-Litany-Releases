@@ -28,7 +28,7 @@ def api(route):
 
 def draft():
     record = api('/releases/' + RELEASE)
-    if not record.get('draft') or not re.fullmatch(r'qualification-v055-[a-f0-9]{7,40}', record['tag_name']):
+    if not record.get('draft') or not re.fullmatch(r'qualification-v(?:055|056)-[a-f0-9]{7,40}', record['tag_name']):
         raise ValueError('Qualification requires the original unpublished draft')
     return record
 
